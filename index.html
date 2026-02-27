@@ -22,23 +22,34 @@
     <!-- HOST -->
     <div id="stepHost" style="display:none">
       <div id="hostS1">
-        <div style="color:#aaa;font-size:7px;margin-bottom:4px">1. Copiez votre code → envoyez à P2 :</div>
-        <button id="btnCopyOffer" onclick="copyOffer()" disabled style="width:100%;margin-bottom:5px;padding:6px">⏳ Génération...</button>
+        <div style="color:#aaa;font-size:7px;margin-bottom:3px">1. Sélectionnez tout et copiez (Ctrl+A Ctrl+C) :</div>
+        <textarea id="offerBox" readonly onclick="this.select()"
+          style="width:100%;height:55px;background:#0a0010;color:#00ff88;font-size:6px;font-family:monospace;border:1px solid #cc2200;resize:none;padding:3px;cursor:pointer"
+          placeholder="⏳ Génération..."></textarea>
+        <div style="color:#aaa;font-size:7px;margin:4px 0 2px">→ Envoyez ce texte à P2, puis :</div>
         <button onclick="hostNext()" style="width:100%;padding:6px">✅ J'ai envoyé → SUIVANT</button>
       </div>
       <div id="hostS2" style="display:none">
-        <div style="color:#aaa;font-size:7px;margin-bottom:4px">2. Quand P2 vous envoie sa réponse :</div>
-        <button onclick="hostApplyAnswer()" style="width:100%;padding:6px">📋 COLLER RÉPONSE DE P2</button>
+        <div style="color:#aaa;font-size:7px;margin-bottom:3px">2. Collez la réponse de P2 ici :</div>
+        <textarea id="answerBox" onclick="this.select()"
+          style="width:100%;height:55px;background:#0a0010;color:#fff;font-size:6px;font-family:monospace;border:1px solid #cc2200;resize:none;padding:3px"
+          placeholder="Collez ici..."></textarea>
+        <button onclick="hostApplyAnswer()" style="width:100%;padding:6px;margin-top:3px">✅ CONNECTER</button>
       </div>
     </div>
 
     <!-- JOIN -->
     <div id="stepJoin" style="display:none">
-      <div style="color:#aaa;font-size:7px;margin-bottom:4px">1. Copiez le code de P1, puis :</div>
-      <button onclick="joinPaste()" style="width:100%;margin-bottom:5px;padding:6px">📋 COLLER CODE DE P1</button>
-      <div id="joinS2" style="display:none">
-        <div style="color:#aaa;font-size:7px;margin-bottom:4px">2. Envoyez votre réponse à P1 :</div>
-        <button onclick="copyAnswer()" style="width:100%;padding:6px">📋 COPIER MA RÉPONSE</button>
+      <div style="color:#aaa;font-size:7px;margin-bottom:3px">1. Collez le code de P1 ici :</div>
+      <textarea id="offerInput" onclick="this.select()"
+        style="width:100%;height:55px;background:#0a0010;color:#fff;font-size:6px;font-family:monospace;border:1px solid #cc2200;resize:none;padding:3px"
+        placeholder="Collez ici..."></textarea>
+      <button onclick="joinPaste()" style="width:100%;padding:6px;margin-top:3px">⚙️ GÉNÉRER MA RÉPONSE</button>
+      <div id="joinS2" style="display:none;margin-top:6px">
+        <div style="color:#aaa;font-size:7px;margin-bottom:3px">2. Sélectionnez tout et copiez (Ctrl+A Ctrl+C), envoyez à P1 :</div>
+        <textarea id="answerOutBox" readonly onclick="this.select()"
+          style="width:100%;height:55px;background:#0a0010;color:#00ff88;font-size:6px;font-family:monospace;border:1px solid #cc2200;resize:none;padding:3px;cursor:pointer"
+          placeholder="⏳ Génération..."></textarea>
       </div>
     </div>
 
@@ -635,18 +646,14 @@
       setupDC(dc);
       const offer=await gatherICE(()=>rtc.createOffer().then(o=>rtc.setLocalDescription(o)));
       _offer=btoa(JSON.stringify(offer));
-      document.getElementById('btnCopyOffer').disabled=false;
-      document.getElementById('btnCopyOffer').textContent='📋 COPIER MON CODE';
-      setStatus('🟡 Copiez le code → envoyez à P2','#ffaa00');
+      document.getElementById('offerBox').value=_offer;
+      setStatus('🟡 Copiez le texte → envoyez à P2','#ffaa00');
     }catch(e){
       setStatus('❌ '+e.message,'#ff4400');
     }
   }
 
-  function copyOffer(){
-    copy(_offer);
-    setMsg('✅ Code copié! Envoyez-le à P2 puis cliquez SUIVANT.');
-  }
+  function copyOffer(){ /* plus utilisé */ }
 
   function hostNext(){
     document.getElementById('hostS1').style.display='none';
@@ -655,14 +662,12 @@
   }
 
   async function hostApplyAnswer(){
-    let raw='';
-    try{ raw=await navigator.clipboard.readText(); }
-    catch(e){ raw=prompt('Collez la réponse de P2 ici :'); }
-    if(!raw){setMsg('❌ Rien collé!','#ff4400');return;}
+    const raw=document.getElementById('answerBox').value.trim();
+    if(!raw){setMsg('❌ Collez la réponse de P2 dans la zone de texte!','#ff4400');return;}
     try{
-      await rtc.setRemoteDescription(JSON.parse(atob(raw.trim())));
-      setStatus('🔄 Connexion...','#ffcc00');
-    }catch(e){setMsg('❌ Réponse invalide','#ff4400');}
+      await rtc.setRemoteDescription(JSON.parse(atob(raw)));
+      setStatus('🔄 Connexion en cours...','#ffcc00');
+    }catch(e){setMsg('❌ Réponse invalide — vérifiez le texte collé','#ff4400');}
   }
 
   // ---- REJOINDRE ----
@@ -674,34 +679,26 @@
   }
 
   async function joinPaste(){
-    let raw='';
-    try{ raw=await navigator.clipboard.readText(); }
-    catch(e){ raw=prompt('Collez le code de P1 ici :'); }
-    if(!raw){setMsg('❌ Rien collé!','#ff4400');return;}
+    const raw=document.getElementById('offerInput').value.trim();
+    if(!raw){setMsg('❌ Collez le code de P1 dans la zone de texte!','#ff4400');return;}
     try{
       rtc=new RTCPeerConnection(RTC_CFG);
       rtc.ondatachannel=e=>{dc=e.channel;setupDC(dc);};
-      const offer=JSON.parse(atob(raw.trim()));
+      const offer=JSON.parse(atob(raw));
       const answer=await gatherICE(()=>
         rtc.setRemoteDescription(offer)
           .then(()=>rtc.createAnswer())
           .then(a=>rtc.setLocalDescription(a))
       );
       _answer=btoa(JSON.stringify(answer));
+      document.getElementById('answerOutBox').value=_answer;
       document.getElementById('joinS2').style.display='block';
       setStatus('🟡 Copiez votre réponse → envoyez à P1','#ffaa00');
     }catch(e){setMsg('❌ Code invalide: '+e.message,'#ff4400');}
   }
 
-  function copyAnswer(){
-    copy(_answer);
-    setMsg('✅ Réponse copiée! Envoyez-la à P1.');
-  }
-
-  function copy(txt){
-    navigator.clipboard.writeText(txt)
-      .catch(()=>prompt('Copiez tout (Ctrl+A puis Ctrl+C) :',txt));
-  }
+  function copyAnswer(){ /* plus utilisé */ }
+  function copy(txt){ navigator.clipboard.writeText(txt).catch(()=>{}); }
 
   function setupDC(channel){
     channel.onopen=()=>{
@@ -724,7 +721,7 @@
     channel.onclose=()=>{isOnline=false;setStatus('🔴 Déconnecté','#ff4400');};
   }
 
-  
+
   function sendStartMatch(){
     if(dc&&dc.readyState==='open')dc.send(JSON.stringify({type:'startMatch',teams,gameMode}));
     else setTimeout(sendStartMatch,300);
