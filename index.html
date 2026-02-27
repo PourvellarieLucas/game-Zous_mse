@@ -15,27 +15,34 @@
     <div id="onlineStatus" style="color:#ffcc00;margin-bottom:8px;font-size:8px">● HORS LIGNE</div>
 
     <div id="step1">
-      <button onclick="initHost()" style="width:100%;margin-bottom:4px;padding:7px">🎮 CRÉER UNE PARTIE</button>
-      <button onclick="initJoin()" style="width:100%;padding:7px">🔗 REJOINDRE</button>
+      <button onclick="initHost()" style="width:100%;margin-bottom:4px;padding:7px">🎮 HÉBERGER (P1)</button>
+      <button onclick="initJoin()" style="width:100%;padding:7px">🔗 REJOINDRE (P2)</button>
     </div>
 
+    <!-- HOST -->
     <div id="stepHost" style="display:none">
-      <div style="color:#aaa;font-size:7px;margin-bottom:6px">Donnez ce code à votre adversaire :</div>
-      <div id="roomCodeDisplay" style="font-size:22px;letter-spacing:5px;color:#00ff88;text-align:center;padding:8px 0;font-weight:bold">----</div>
-      <div style="color:#aaa;font-size:7px;text-align:center;margin-bottom:8px">En attente de connexion...</div>
-      <div id="hostDots" style="text-align:center;font-size:14px;color:#ffcc00">⏳</div>
+      <div id="hostS1">
+        <div style="color:#aaa;font-size:7px;margin-bottom:4px">1. Copiez votre code → envoyez à P2 :</div>
+        <button id="btnCopyOffer" onclick="copyOffer()" disabled style="width:100%;margin-bottom:5px;padding:6px">⏳ Génération...</button>
+        <button onclick="hostNext()" style="width:100%;padding:6px">✅ J'ai envoyé → SUIVANT</button>
+      </div>
+      <div id="hostS2" style="display:none">
+        <div style="color:#aaa;font-size:7px;margin-bottom:4px">2. Quand P2 vous envoie sa réponse :</div>
+        <button onclick="hostApplyAnswer()" style="width:100%;padding:6px">📋 COLLER RÉPONSE DE P2</button>
+      </div>
     </div>
 
+    <!-- JOIN -->
     <div id="stepJoin" style="display:none">
-      <div style="color:#aaa;font-size:7px;margin-bottom:5px">Entrez le code de la partie :</div>
-      <input id="roomInput" maxlength="6" placeholder="000000"
-        style="width:100%;background:#111;border:2px solid #cc2200;color:#00ff88;font-family:monospace;font-size:20px;text-align:center;padding:6px;letter-spacing:4px;"
-        oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
-        onkeydown="if(event.key==='Enter')joinWithCode()">
-      <button onclick="joinWithCode()" style="width:100%;margin-top:6px;padding:7px">🔗 REJOINDRE</button>
+      <div style="color:#aaa;font-size:7px;margin-bottom:4px">1. Copiez le code de P1, puis :</div>
+      <button onclick="joinPaste()" style="width:100%;margin-bottom:5px;padding:6px">📋 COLLER CODE DE P1</button>
+      <div id="joinS2" style="display:none">
+        <div style="color:#aaa;font-size:7px;margin-bottom:4px">2. Envoyez votre réponse à P1 :</div>
+        <button onclick="copyAnswer()" style="width:100%;padding:6px">📋 COPIER MA RÉPONSE</button>
+      </div>
     </div>
 
-    <div id="connMsg" style="color:#00ff88;margin-top:6px;display:none;font-size:8px;text-align:center"></div>
+    <div id="connMsg" style="margin-top:6px;display:none;font-size:8px;text-align:center"></div>
   </div>
 
   <script>
@@ -588,167 +595,120 @@
 
   let _prevInp=[{jump:false,lightAtk:false,heavyAtk:false,block:false},{jump:false,lightAtk:false,heavyAtk:false,block:false}];
 
-  // ---- ONLINE — Code de salle via jsonblob.com ----
+  // ---- ONLINE — WebRTC sans serveur ----
   let rtc=null,dc=null,isOnline=false,onlineRole=-1;
   let remoteInp={left:false,right:false,jump:false,lightAtk:false,heavyAtk:false,block:false,dash:false,special:false};
-  let _blobId=null,_pollTimer=null;
+  let _offer='',_answer='';
 
   const RTC_CFG={iceServers:[
     {urls:'stun:stun.l.google.com:19302'},
     {urls:'stun:stun1.l.google.com:19302'},
-    {urls:'stun:stun.relay.metered.ca:80'},
   ]};
-  const API='https://jsonblob.com/api/jsonBlob';
 
   function setStatus(msg,col){const el=document.getElementById('onlineStatus');el.style.color=col||'#ffcc00';el.textContent=msg;}
-  function setMsg(msg){const el=document.getElementById('connMsg');el.style.display='block';el.textContent=msg;}
+  function setMsg(msg,col){const el=document.getElementById('connMsg');el.style.display='block';el.style.color=col||'#00ff88';el.textContent=msg;}
   function closeOnline(){
     document.getElementById('onlinePanel').style.display='none';
     document.getElementById('step1').style.display='block';
     document.getElementById('stepHost').style.display='none';
     document.getElementById('stepJoin').style.display='none';
     document.getElementById('connMsg').style.display='none';
-    if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}
+  }
+
+  function gatherICE(startFn){
+    return new Promise((res,rej)=>{
+      const t=setTimeout(()=>rej(new Error('Timeout — vérifiez votre connexion')),10000);
+      rtc.onicecandidate=e=>{if(!e.candidate){clearTimeout(t);res(rtc.localDescription);}};
+      startFn().catch(rej);
+    });
   }
 
   // ---- HÉBERGER ----
   async function initHost(){
     document.getElementById('step1').style.display='none';
     document.getElementById('stepHost').style.display='block';
-    setStatus('⏳ Création de la partie...');
+    setStatus('⏳ Génération...');
     onlineRole=0;
-    rtc=new RTCPeerConnection(RTC_CFG);
-    dc=rtc.createDataChannel('game',{ordered:true});
-    setupDC(dc);
-    // Attendre ICE gathering
-    const offer = await new Promise(res=>{
-      rtc.onicecandidate=e=>{ if(!e.candidate) res(rtc.localDescription); };
-      rtc.createOffer().then(o=>rtc.setLocalDescription(o));
-    });
-    // Stocker l'offre sur jsonblob
     try{
-      const resp=await fetch(API,{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Accept':'application/json'},
-        body:JSON.stringify({offer:JSON.stringify(offer),answer:null})
-      });
-      if(!resp.ok) throw new Error('HTTP '+resp.status);
-      const loc=resp.headers.get('location')||resp.headers.get('Location');
-      _blobId=loc.split('/').pop();
-      // Code = 6 derniers chiffres de l'ID (l'ID jsonblob est numérique)
-      const code=_blobId.slice(-6).replace(/\D/g,'').padStart(6,'0');
-      document.getElementById('roomCodeDisplay').textContent=code;
-      setStatus('🟡 En attente...','#ffcc00');
-      // Stocker le code complet
-      document.getElementById('roomCodeDisplay').dataset.fullId=_blobId;
-      // Poll pour la réponse de P2
-      _pollTimer=setInterval(()=>pollForAnswer(_blobId),2500);
-    } catch(e){
-      setStatus('❌ Erreur réseau','#ff4400');
-      setMsg('Vérifiez votre connexion. Err: '+e.message);
+      rtc=new RTCPeerConnection(RTC_CFG);
+      dc=rtc.createDataChannel('game',{ordered:true});
+      setupDC(dc);
+      const offer=await gatherICE(()=>rtc.createOffer().then(o=>rtc.setLocalDescription(o)));
+      _offer=btoa(JSON.stringify(offer));
+      document.getElementById('btnCopyOffer').disabled=false;
+      document.getElementById('btnCopyOffer').textContent='📋 COPIER MON CODE';
+      setStatus('🟡 Copiez le code → envoyez à P2','#ffaa00');
+    }catch(e){
+      setStatus('❌ '+e.message,'#ff4400');
     }
   }
 
-  async function pollForAnswer(blobId){
+  function copyOffer(){
+    copy(_offer);
+    setMsg('✅ Code copié! Envoyez-le à P2 puis cliquez SUIVANT.');
+  }
+
+  function hostNext(){
+    document.getElementById('hostS1').style.display='none';
+    document.getElementById('hostS2').style.display='block';
+    setStatus('🟡 Attendez la réponse de P2...','#ffaa00');
+  }
+
+  async function hostApplyAnswer(){
+    let raw='';
+    try{ raw=await navigator.clipboard.readText(); }
+    catch(e){ raw=prompt('Collez la réponse de P2 ici :'); }
+    if(!raw){setMsg('❌ Rien collé!','#ff4400');return;}
     try{
-      const r=await fetch(API+'/'+blobId,{headers:{'Accept':'application/json'}});
-      if(!r.ok)return;
-      const data=await r.json();
-      if(data.answer){
-        clearInterval(_pollTimer);_pollTimer=null;
-        const ans=JSON.parse(data.answer);
-        rtc.setRemoteDescription(ans)
-          .then(()=>setStatus('🟢 Connecté — P1','#00ff88'))
-          .catch(()=>setMsg('❌ Réponse invalide'));
-      }
-    }catch(e){}
+      await rtc.setRemoteDescription(JSON.parse(atob(raw.trim())));
+      setStatus('🔄 Connexion...','#ffcc00');
+    }catch(e){setMsg('❌ Réponse invalide','#ff4400');}
   }
 
   // ---- REJOINDRE ----
   function initJoin(){
     document.getElementById('step1').style.display='none';
     document.getElementById('stepJoin').style.display='block';
-    setStatus('Entrez le code de la partie');
+    setStatus('Collez le code de P1');
     onlineRole=1;
-    setTimeout(()=>document.getElementById('roomInput').focus(),100);
   }
 
-  async function joinWithCode(){
-    const code=document.getElementById('roomInput').value.trim();
-    if(code.length!==6){setMsg('❌ Code à 6 chiffres requis');return;}
-    setStatus('⏳ Recherche de la partie...','#ffcc00');
-    setMsg('');
-    // Chercher le blob par code dans les blobs récents (jsonblob ne supporte pas la recherche)
-    // On stocke l'ID du blob dans sessionStorage côté P1, P2 doit utiliser le même blob
-    // Alternative : stocker dans un blob "annuaire" centralisé
-    // Solution : P1 stocke {code, offer} et met l'ID du blob dans la valeur du code
-    // En pratique : on va utiliser un blob "index" fixe où P1 écrit {code→blobId}
-    // Solution simple : utiliser l'ID jsonblob comme code mais encodé
-    // SOLUTION FINALE : on utilise le code comme ID direct du blob (possible car on le crée nous-même)
-    // => On crée le blob avec un ID prédictible via le code... jsonblob ne supporte pas ça.
-    // => On utilise un blob "registre" avec un ID connu pour mapper code→blobId
-    
-    // Approche directe : P1 inclut son blobId dans les 6 chiffres via un registre partagé
-    // blob registre = blob créé une fois, ID hardcodé dans le code
+  async function joinPaste(){
+    let raw='';
+    try{ raw=await navigator.clipboard.readText(); }
+    catch(e){ raw=prompt('Collez le code de P1 ici :'); }
+    if(!raw){setMsg('❌ Rien collé!','#ff4400');return;}
     try{
-      // Utiliser le registre partagé pour résoudre code → blobId
-      const regId = await getRegistry();
-      const r=await fetch(API+'/'+regId,{headers:{'Accept':'application/json'}});
-      const reg=r.ok?await r.json():{};
-      const blobId=reg[code];
-      if(!blobId){setMsg('❌ Code introuvable ou expiré');setStatus('❌ Code invalide','#ff4400');return;}
-      
-      const r2=await fetch(API+'/'+blobId,{headers:{'Accept':'application/json'}});
-      if(!r2.ok){setMsg('❌ Partie expirée');return;}
-      const data=await r2.json();
-      if(!data.offer){setMsg('❌ Partie invalide');return;}
-      
       rtc=new RTCPeerConnection(RTC_CFG);
       rtc.ondatachannel=e=>{dc=e.channel;setupDC(dc);};
-      
-      const answer=await new Promise((res,rej)=>{
-        rtc.onicecandidate=e=>{ if(!e.candidate) res(rtc.localDescription); };
-        rtc.setRemoteDescription(JSON.parse(data.offer))
+      const offer=JSON.parse(atob(raw.trim()));
+      const answer=await gatherICE(()=>
+        rtc.setRemoteDescription(offer)
           .then(()=>rtc.createAnswer())
           .then(a=>rtc.setLocalDescription(a))
-          .catch(rej);
-      });
-      
-      await fetch(API+'/'+blobId,{
-        method:'PUT',
-        headers:{'Content-Type':'application/json','Accept':'application/json'},
-        body:JSON.stringify({code:code,offer:data.offer,answer:JSON.stringify(answer)})
-      });
-      setStatus('🟡 Réponse envoyée, attente de P1...','#ffcc00');
-    }catch(e){
-      setStatus('❌ Erreur','#ff4400');
-      setMsg('Erreur: '+e.message);
-    }
+      );
+      _answer=btoa(JSON.stringify(answer));
+      document.getElementById('joinS2').style.display='block';
+      setStatus('🟡 Copiez votre réponse → envoyez à P1','#ffaa00');
+    }catch(e){setMsg('❌ Code invalide: '+e.message,'#ff4400');}
   }
 
-  // Registre partagé : blob qui mappe code → blobId
-  // On le crée au 1er usage et on stocke son ID dans localStorage
-  async function getRegistry(){
-    let regId=localStorage.getItem('sc_registry');
-    if(!regId){
-      // Créer un registre vide
-      try{
-        const resp=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({_reg:true})});
-        const loc=resp.headers.get('location')||resp.headers.get('Location')||'';
-        regId=loc.split('/').pop();
-        localStorage.setItem('sc_registry',regId);
-      }catch(e){return null;}
-    }
-    return regId;
+  function copyAnswer(){
+    copy(_answer);
+    setMsg('✅ Réponse copiée! Envoyez-la à P1.');
+  }
+
+  function copy(txt){
+    navigator.clipboard.writeText(txt)
+      .catch(()=>prompt('Copiez tout (Ctrl+A puis Ctrl+C) :',txt));
   }
 
   function setupDC(channel){
     channel.onopen=()=>{
       isOnline=true;
       setStatus('🟢 Connecté!','#00ff88');
-      setMsg(onlineRole===0?'✅ Choisissez vos guerriers!':'✅ Connecté! Attendez P1...');
-      if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}
-      setTimeout(()=>{document.getElementById('onlinePanel').style.display='none';},1800);
+      setMsg(onlineRole===0?'✅ Choisissez vos guerriers!':'✅ Attendez P1...');
+      setTimeout(()=>{document.getElementById('onlinePanel').style.display='none';},1500);
     };
     channel.onmessage=e=>{
       try{
